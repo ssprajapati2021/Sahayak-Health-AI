@@ -1,0 +1,2 @@
+# Sahayak-Health-AI
+This project focuses on the development of Sahayak Health AI, an agentic decision-support  assistant for community health workers (ASHA workers) in rural India. The system combines multi-agent  orchestration (Google Agent Development Kit), staged clinical reasoning, an interactive follow-up loop,  deterministic safety auditing, and a held-out final evaluation against declared clinical thresholds to  convert a natural-language symptom description into exactly one care-seeking recommendation: WAIT,  DOCTOR, or ER. 
