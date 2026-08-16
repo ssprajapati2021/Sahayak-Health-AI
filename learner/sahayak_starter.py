@@ -22,9 +22,9 @@ import pandas as pd
 logging.basicConfig(level=os.getenv("SAHAYAK_LOG_LEVEL", "WARNING"))
 _trace_log = logging.getLogger("sahayak.trace")
 
-from data_loader import build_evaluation_dataset
+from learner.data_loader import build_evaluation_dataset
 
-DEFAULT_MODEL = os.getenv("SAHAYAK_MODEL", "gemini-2.0-flash")
+DEFAULT_MODEL = os.getenv("SAHAYAK_MODEL", "gemini-3.6-flash")
 APP_NAME = "sahayak_health"
 
 # -- GIVE: constants -----------------------------------------------------------
@@ -342,7 +342,58 @@ def score_severity(
     # FILL IN: implement the rules above.
     # Use _normalise() to lowercase the text before checking.
     # Look at the SYMPTOM_KEYWORDS and EMERGENCY_RED_FLAGS constants for vocabulary.
-    raise NotImplementedError("Implement score_severity() -- data_understanding_and_baseline.ipynb task")
+    text = _normalise(patient_input)
+
+    # Severity 5 — ER
+    if (
+        ("chest pain" in text and ("breathlessness" in text or "shortness of breath" in text or "sweating" in text))
+        or any(flag in text for flag in [
+            "altered sensorium",
+            "fainting",
+            "severe bleeding",
+            "weakness of one body side",
+            "one-sided weakness",
+        ])
+    ):
+        return {"severity": 5, "reason": "Emergency red flag detected."}
+
+    # Severity 4 — DOCTOR today
+    if (
+        ("fever" in text and "stiff neck" in text)
+        or any(term in text for term in [
+            "burning micturition",
+            "foul urine",
+            "irregular sugar level",
+            "enlarged thyroid",
+        ])
+        or (
+            "weight loss" in text
+            and any(term in text for term in ["sweating", "diarrhoea", "diarrhea"])
+        )
+    ):
+        return {"severity": 4, "reason": "Systemic or specialist symptoms require prompt medical evaluation."}
+
+    # Severity 3 — DOCTOR maybe / follow-up
+    if any(term in text for term in [
+        "fever",
+        "vomiting",
+        "abdominal pain",
+        "headache",
+    ]):
+        return {"severity": 3, "reason": "Symptoms may require clarification before deciding care level."}
+
+    # Severity 2 — WAIT
+    if any(term in text for term in [
+        "rash",
+        "joint pain",
+        "cough",
+        "muscle pain",
+    ]):
+        return {"severity": 2, "reason": "Non-emergency symptoms without red flags."}
+
+    # Severity 1 — WAIT
+    return {"severity": 1, "reason": "No alarming symptoms detected."}
+    #raise NotImplementedError("Implement score_severity() -- data_understanding_and_baseline.ipynb task")
 
 
 def decide_triage(
@@ -370,8 +421,51 @@ def decide_triage(
         -> base rule -> WAIT
         -> escalation_floor(2, answer) -> "DOCTOR"   (breathing = soft flag at sev 2)
         -> take the higher -> final = DOCTOR
-    """
-    raise NotImplementedError("Implement decide_triage() -- data_understanding_and_baseline.ipynb task")
+    """   
+
+    severity = int(severity_json["severity"])
+
+    # Base rules
+    if severity == 5:
+        decision = "ER"
+        rule_applied = "severity 5 -> ER"
+
+    elif severity == 4:
+        decision = "DOCTOR"
+        rule_applied = "severity 4 -> DOCTOR"
+
+    elif severity == 3:
+        decision = "DOCTOR"
+        rule_applied = "severity 3 -> DOCTOR"
+
+    else:  # severity 1 or 2
+        decision = "WAIT"
+        rule_applied = "severity 1-2 -> WAIT"
+
+    # Apply hard escalation floor.
+    # This can only raise the decision, never lower it.
+    answer = ""
+    if followup:
+        answer = followup.get("answer", "")
+
+    floor = escalation_floor(severity, answer)
+
+    if floor is not None:
+        level_order = {
+            "WAIT": 1,
+            "DOCTOR": 2,
+            "ER": 3,
+        }
+
+        if level_order[floor] > level_order[decision]:
+            decision = floor
+            rule_applied += f"; escalation floor -> {floor}"
+
+    return {
+        "triage_level": decision,
+        "rule_applied": rule_applied,
+    }
+    #raise NotImplementedError("Implement decide_triage() -- data_understanding_and_baseline.ipynb task")
 
 
 def run_policy_triage(
@@ -399,8 +493,43 @@ def run_policy_triage(
         5. decide_triage(severity_json, followup)
         6. format_patient_response(triage_decision, severity_json, symptoms)
         7. ensure_disclaimer(final_response)  -- GIVE function, enforces the disclaimer
-    """
-    raise NotImplementedError("Implement run_policy_triage() -- data_understanding_and_baseline.ipynb task")
+    """  
+
+    # 1. Extract symptoms
+    symptoms = extract_symptoms(patient_input)
+
+    # 2. Score severity
+    severity_json = score_severity(patient_input, symptoms, vitals)
+
+    # 3. Generate follow-up question
+    followup = make_followup_question(symptoms, severity_json)
+
+    # 4. Add follow-up answer if provided
+    if followup_answer is not None:
+        followup["answer"] = followup_answer
+
+    # 5. Decide triage level
+    triage_decision = decide_triage(severity_json, followup)
+
+    # 6. Format response
+    final_response = format_patient_response(
+        triage_decision,
+        severity_json,
+        symptoms
+    )
+
+    # 7. Ensure mandatory disclaimer
+    final_response = ensure_disclaimer(final_response)
+
+    return {
+        "symptoms": symptoms,
+        "severity_json": severity_json,
+        "followup": followup,
+        "triage_decision": triage_decision,
+        "predicted_triage": triage_decision["triage_level"],
+        "final_response": final_response,
+    }
+    #raise NotImplementedError("Implement run_policy_triage() -- data_understanding_and_baseline.ipynb task")
 
 
 # -----------------------------------------------------------------------------
