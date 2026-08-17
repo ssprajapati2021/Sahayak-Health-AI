@@ -571,7 +571,7 @@ async def run_triage_async(runner, session_service, patient_input, session_id=No
         pass
     final_session = await session_service.get_session(
         app_name=APP_NAME, user_id=user_id, session_id=session_id)
-    from sahayak_tools import attach_medication_note
+    from learner.sahayak_tools import attach_medication_note
     return attach_medication_note(dict(final_session.state), patient_input, DISCLAIMER)
 
 
@@ -589,9 +589,9 @@ def run_policy_evaluation(n=50, seed=42):
 
     GIVEN harness -- it drives YOUR data_understanding_and_baseline.ipynb run_policy_triage() from
     sahayak_starter.py, so implement that first. Returns (results_df, metrics)."""
-    from data_loader import build_evaluation_dataset
+    from learner.data_loader import build_evaluation_dataset
     try:
-        from sahayak_starter import run_policy_triage
+        from learner.sahayak_starter import run_policy_triage
     except Exception as exc:
         raise RuntimeError(
             "run_policy_evaluation needs your data_understanding_and_baseline.ipynb run_policy_triage() in "
