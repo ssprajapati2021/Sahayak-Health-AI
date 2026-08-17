@@ -19,7 +19,7 @@ from typing import Optional
 
 import requests
 
-from utils import (
+from learner.utils import (
     INDIA_DRUG_ALIASES,
     INDIA_ONLY_DRUG_WARNINGS,
     hybrid_search,

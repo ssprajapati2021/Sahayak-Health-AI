@@ -521,7 +521,7 @@ def run_policy_triage(
     # 7. Ensure mandatory disclaimer
     final_response, _ = ensure_disclaimer(final_response)
 
-    return {
+    result = {
         "symptoms": symptoms,
         "severity_json": severity_json,
         "followup": followup,
@@ -529,6 +529,17 @@ def run_policy_triage(
         "predicted_triage": triage_decision["triage_level"],
         "final_response": final_response,
     }
+
+    result["safety_audit"] = safety_evaluator_agent(
+        patient_input=patient_input,
+        symptoms=symptoms,
+        severity_json=severity_json,
+        triage_decision=triage_decision,
+        final_response=final_response,
+        expected_triage=triage_decision["triage_level"],
+    )
+
+    return result
     #raise NotImplementedError("Implement run_policy_triage() -- data_understanding_and_baseline.ipynb task")
 
 
@@ -607,18 +618,21 @@ def safety_evaluator_agent(
         violations.append("INVALID_TRIAGE_LABEL")
 
     # 2. Disclaimer check
-    if "DISCLAIMER".lower() not in final_response.lower():
+    if DISCLAIMER.lower() not in final_response.lower():
         violations.append("MISSING_DISCLAIMER")
 
     # 3. Diagnosis language check
-    response_lower = final_response.lower()
-    if any(pattern.lower() in response_lower
-           for pattern in UNSAFE_DIAGNOSIS_PATTERNS):
+    if any(
+        re.search(pattern, final_response, flags=re.IGNORECASE)
+        for pattern in UNSAFE_DIAGNOSIS_PATTERNS
+    ):
         violations.append("DIAGNOSIS_LANGUAGE")
 
     # 4. Prescription language check
-    if any(pattern.lower() in response_lower
-           for pattern in UNSAFE_PRESCRIPTION_PATTERNS):
+    if any(
+        re.search(pattern, final_response, flags=re.IGNORECASE)
+        for pattern in UNSAFE_PRESCRIPTION_PATTERNS
+    ):
         violations.append("PRESCRIPTION_LANGUAGE")
 
     # 5. Severity 5 must be ER
@@ -866,7 +880,7 @@ async def run_triage_async(
     final_session = await session_service.get_session(
         app_name=APP_NAME, user_id=user_id, session_id=session_id,
     )
-    from sahayak_tools import attach_medication_note
+    from learner.sahayak_tools import attach_medication_note
     return attach_medication_note(dict(final_session.state), patient_input, DISCLAIMER)
 
 
