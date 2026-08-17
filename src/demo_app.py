@@ -47,7 +47,7 @@ from google.adk.sessions import InMemorySessionService
 from google.adk.tools import FunctionTool
 from google.genai.types import Content, Part
 
-from sahayak_starter import (
+from learner.sahayak_starter import (
     FOLLOWUP_ASKER_INSTRUCTION,
     GENERIC_RED_FLAG_QUESTION,
     NO_DIAGNOSIS_RULES,
@@ -59,7 +59,7 @@ from sahayak_starter import (
     safety_evaluator_agent,
     validate_stage_output,
 )
-from sahayak_tools import (
+from learner.sahayak_tools import (
     attach_medication_note,
     calculate_india_news2,
     lookup_drug_safety,
