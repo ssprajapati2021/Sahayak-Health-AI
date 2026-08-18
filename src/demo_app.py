@@ -33,7 +33,6 @@ if _learner_dir not in sys.path:
     sys.path.insert(0, _learner_dir)
 
 os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "FALSE"
-os.environ["GOOGLE_API_KEY"] = "dummy"
 
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, StreamingResponse
@@ -53,6 +52,8 @@ from learner.sahayak_starter import (
     NO_DIAGNOSIS_RULES,
     SEVERITY_SCORER_INSTRUCTION,
     TRIAGE_DECIDER_AGENTIC_INSTRUCTION,
+    SAFETY_EVALUATOR_INSTRUCTION,
+    RESPONSE_FORMATTER_INSTRUCTION,
     ensure_disclaimer,
     escalation_floor,
     parse_predicted_triage,
@@ -66,9 +67,21 @@ from learner.sahayak_tools import (
     parse_vitals_from_text,
     search_symptom_cases_db,
 )
+from dotenv import load_dotenv
+# Load environment variables
+load_dotenv()
 
-MODEL_ID = "hermes3:8b"
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+MODEL_ID = os.getenv("GEMINI_MODEL") #for OLLAMA OLLAMA_MODEL
+
+if not GOOGLE_API_KEY:
+    raise ValueError("GOOGLE_API_KEY is not configured in .env")
+
+if not MODEL_ID:
+    raise ValueError("GEMINI_MODEL is not configured in .env")
+
 OLLAMA_MODEL = LiteLlm(model=f"ollama_chat/{MODEL_ID}", api_base="http://localhost:11434")
+
 DISCLAIMER = (
     "This is decision support guidance only. Always consult a qualified "
     "medical professional for diagnosis and treatment."
@@ -82,7 +95,7 @@ def _sse(obj: dict) -> str:
 
 # ── Phase A: intake — parse, score, ask ───────────────────────────────────────
 symptom_parser = LlmAgent(
-    name="symptom_parser", model=OLLAMA_MODEL,
+    name="symptom_parser", model=MODEL_ID,
     instruction=(
         "Extract symptoms from the patient description.\n"
         "Return ONLY a raw JSON list of strings — no markdown, no backticks.\n"
@@ -94,14 +107,14 @@ symptom_parser = LlmAgent(
 
 # Calibrated rubric shared with sahayak_starter (single source of truth).
 severity_scorer = LlmAgent(
-    name="severity_scorer", model=OLLAMA_MODEL,
+    name="severity_scorer", model=MODEL_ID,
     instruction=SEVERITY_SCORER_INSTRUCTION,
     output_key="severity_json",
 )
 
 # Instruction imported from sahayak_starter — single source of truth.
 followup_asker = LlmAgent(
-    name="followup_asker", model=OLLAMA_MODEL,
+    name="followup_asker", model=MODEL_ID,
     instruction=FOLLOWUP_ASKER_INSTRUCTION,
     output_key="followup",
 )
@@ -117,7 +130,7 @@ runner_a = Runner(agent=pipeline_a, app_name="sahayak_intake", session_service=s
 # Instruction imported from sahayak_starter — the eval loop-closure probe
 # measures the exact prompt deployed here.
 triage_decider = LlmAgent(
-    name="triage_decider", model=OLLAMA_MODEL,
+    name="triage_decider", model=MODEL_ID,
     instruction=TRIAGE_DECIDER_AGENTIC_INSTRUCTION,
     output_key="triage_decision",
     tools=[
@@ -129,33 +142,35 @@ triage_decider = LlmAgent(
 )
 
 response_formatter = LlmAgent(
-    name="response_formatter", model=OLLAMA_MODEL,
-    instruction=(
-        "Write a clear, plain-language response for Priya (ASHA health worker).\n"
-        "Structure: action first → reason → one practical next step → disclaimer.\n"
-        "If the worker answered a follow-up question, reflect that answer in the reason.\n"
-        + NO_DIAGNOSIS_RULES
-        + f"End with exactly: {DISCLAIMER}\n"
-        "Triage: {triage_decision}\nSymptoms: {symptoms}\nSeverity: {severity_json}\n"
-        "Follow-up asked: {followup}\nWorker's answer: {followup_answer}"
-    ),
+    name="response_formatter", model=MODEL_ID,
+    instruction=RESPONSE_FORMATTER_INSTRUCTION,
+    # (
+    #     "Write a clear, plain-language response for Priya (ASHA health worker).\n"
+    #     "Structure: action first → reason → one practical next step → disclaimer.\n"
+    #     "If the worker answered a follow-up question, reflect that answer in the reason.\n"
+    #     + NO_DIAGNOSIS_RULES
+    #     + f"End with exactly: {DISCLAIMER}\n"
+    #     "Triage: {triage_decision}\nSymptoms: {symptoms}\nSeverity: {severity_json}\n"
+    #     "Follow-up asked: {followup}\nWorker's answer: {followup_answer}"
+    # ),
     output_key="final_response",
 )
 
 safety_evaluator = LlmAgent(
-    name="safety_evaluator", model=OLLAMA_MODEL,
-    instruction=(
-        "Audit response for safety violations.\n"
-        "Check: (1) no diagnosis, (2) no prescription, (3) disclaimer present, "
-        "(4) valid triage, (5) no under-triage.\n"
-        "Return ONLY raw JSON — no markdown.\n"
-        'Format: {"verdict": "PASS"|"FLAG", "risk_level": "low"|"moderate"|"high", '
-        '"violations": [], "human_review_needed": true/false, '
-        '"stage_to_debug": "none"|"symptom_parser"|"severity_scorer"|"triage_decider"|"response_formatter", '
-        '"reason": "one sentence"}\n'
-        "Patient: {patient_input}\nSymptoms: {symptoms}\nSeverity: {severity_json}\n"
-        "Triage: {triage_decision}\nFollow-up answer: {followup_answer}\nResponse: {final_response}"
-    ),
+    name="safety_evaluator", model=MODEL_ID,
+    instruction=SAFETY_EVALUATOR_INSTRUCTION,
+    # (
+    #     "Audit response for safety violations.\n"
+    #     "Check: (1) no diagnosis, (2) no prescription, (3) disclaimer present, "
+    #     "(4) valid triage, (5) no under-triage.\n"
+    #     "Return ONLY raw JSON — no markdown.\n"
+    #     'Format: {"verdict": "PASS"|"FLAG", "risk_level": "low"|"moderate"|"high", '
+    #     '"violations": [], "human_review_needed": true/false, '
+    #     '"stage_to_debug": "none"|"symptom_parser"|"severity_scorer"|"triage_decider"|"response_formatter", '
+    #     '"reason": "one sentence"}\n'
+    #     "Patient: {patient_input}\nSymptoms: {symptoms}\nSeverity: {severity_json}\n"
+    #     "Triage: {triage_decision}\nFollow-up answer: {followup_answer}\nResponse: {final_response}"
+    # ),
     output_key="safety_audit",
 )
 
@@ -1032,7 +1047,7 @@ HTML = r"""<!DOCTYPE html>
   <div class="logo">+</div>
   <div>
     <h1>Sahayak Health AI</h1>
-    <p>hermes3:8b &middot; two-phase pipeline with interactive follow-up &middot; for ASHA worker Priya</p>
+    <p>__MODEL_ID__ &middot; two-phase pipeline with interactive follow-up &middot; for ASHA worker Priya</p>
   </div>
 </div>
 <nav style="background:#243b2e;display:flex;padding:0 28px">
@@ -1276,7 +1291,7 @@ function skipAnswer() {
 </body>
 </html>
 """
-
+HTML = HTML.replace("__MODEL_ID__", MODEL_ID)
 @app.get("/", response_class=HTMLResponse)
 async def root():
     return HTML
